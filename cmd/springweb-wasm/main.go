@@ -163,7 +163,7 @@ func (a *anim) drawWeb() {
 }
 
 func (a *anim) borderStep() {
-	const bounceFactor float64 = -.01
+	const bounceFactor float64 = -.05
 	for i := 0; i < a.nDots; i++ {
 		d := &a.dots[i]
 		if d.VelocityX < 0 && d.X < 0 {
@@ -282,9 +282,10 @@ func (a *anim) lastMass() float64 {
 
 func (a *anim) clickRunning(x, y float64) {
 	node := &a.dots[a.selectedDot]
-	impulse := node.InvMass * defaultMass * defaultK
+	impulse := node.InvMass * minMass * maxK
 	node.VelocityX = (x - node.X) * impulse
 	node.VelocityY = (y - node.Y) * impulse
+    // alt: set velocity zero but position to x, y
 }
 
 func (a *anim) dotSelect(z float64) {
