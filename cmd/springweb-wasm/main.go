@@ -16,13 +16,13 @@ const minMass = defaultMass * .15
 const maxMass = defaultMass * 5
 const sizeFactor = 5e-2
 const sizeButtonClick = 5
-const voidColor = "#ccf"
-const barColor = "#baf"
-const buttonColor = "#70f"
-const dotColor = "#a70"
-const lineColor = "#050"
-const selectedDotColor = "#c83"
-const selectedLineColor = "#05f"
+const voidColor = "#ffd"
+const barColor = "#bd3"
+const buttonColor = "#451"
+const dotColor = "#42d"
+const lineColor = "#620"
+const selectedDotColor = "#87e"
+const selectedLineColor = "#f61"
 
 var never time.Time = time.Unix(0, 0)
 
