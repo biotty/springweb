@@ -163,7 +163,7 @@ func (a *anim) drawWeb() {
 }
 
 func (a *anim) borderStep() {
-	const bounceFactor float64 = -.05
+	const bounceFactor float64 = -.1
 	for i := 0; i < a.nDots; i++ {
 		d := &a.dots[i]
 		if d.VelocityX < 0 && d.X < 0 {
@@ -282,10 +282,12 @@ func (a *anim) lastMass() float64 {
 
 func (a *anim) clickRunning(x, y float64) {
 	node := &a.dots[a.selectedDot]
-	impulse := node.InvMass * minMass * maxK
-	node.VelocityX = (x - node.X) * impulse
-	node.VelocityY = (y - node.Y) * impulse
-    // alt: set velocity zero but position to x, y
+	node.VelocityX = x - node.X
+	node.VelocityY = y - node.Y
+	node.VelocityX = 0
+	node.VelocityY = 0
+	node.X = x
+	node.Y = y
 }
 
 func (a *anim) dotSelect(z float64) {
@@ -332,7 +334,6 @@ func (a *anim) upDown(z float64) {
 }
 
 func (a *anim) clickButton(x float64) {
-	log(x)
 	if x < a.buttonRight(0) {
 		a.playPause()
 	} else if x < a.buttonRight(1) {
