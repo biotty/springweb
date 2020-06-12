@@ -12,12 +12,12 @@ The user-interface application adds a border condition that lightly bounces a ma
 
 The web of point-masses are edited by *adding a dot* and scrolling the mouse-wheel (or clicking an up/down triangle) in order to define its mass.
 The mass M at a given dot is indicated by the area of the drawn dot.
-When a dot is added /and only at that time/ it may be *connected* to the existing dots.
+When a dot is added *and only at that time* it may be *connected* to the existing dots.
 In this way the connected dots forms a graph already non-cyclic
 as created dot by dot, and the web can be passed as-is to the spring-model.
 When a dot is connected a line is drawn to it, representing a spring.
 The K factor of the spring is adjusted by the mouse-wheel (or alternatively by the up/down triangles).
-Clicking a second time on a dot will *remove* last added /either dot or line/.
+Clicking a second time on a dot will *remove* last added *either dot or line*.
 
 When the web drawn is satisfactory to the observer,
 the model may be *run* by clicking the right-pointing triangle on the top left.
@@ -42,4 +42,4 @@ could add modeling of such additional physics in the same manner that
 this application implements a bouncing border.
 
 # Implementation Details
-The reason the *inverse* and not the plain value of the mass is kept for the respective point-mass objects is merely to omit a division in the calculations of accelerations.  Probably an insignificant optimization, which have not been profiled.  Also note that *no tests* comes along with this code, which was a result from trying out with the interface instead of by tests.  Under development a mistake was done where while creating point-masses referencing previous ones, they were *appended* to the set of point-masses, which gave re-allocation and stale data, so that parts of the web did not move when running the interface.  Another error that was made at one time during development was omitting to take the *root* on calculation of distance.  *Lame* mistakes.  Maybe rolling this using more in-code tests would have been /quicker after all/.
+The reason the *inverse* and not the plain value of the mass is kept for the respective point-mass objects is merely to omit a division in the calculations of accelerations.  Probably an insignificant optimization, which have not been profiled.  Also note that *no tests* comes along with this code, which was a result from trying out with the interface instead of by tests.  Under development a mistake was done where while creating point-masses referencing previous ones, they were *appended* to the set of point-masses, which gave re-allocation and stale data, so that parts of the web did not move when running the interface.  Another error that was made at one time during development was omitting to take the *root* on calculation of distance.  *Lame* mistakes.  Maybe rolling this using more in-code tests would have been *quicker after all*.
