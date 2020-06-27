@@ -8,33 +8,45 @@ import (
 	"github.com/biotty/springweb"
 )
 
-const defaultK = 1e-9
-const minK = defaultK * .15
-const maxK = defaultK * 5
-const defaultMass = 5e7
-const minMass = defaultMass * .15
-const maxMass = defaultMass * 5
-const sizeFactor = 5e-2
-const sizeButtonClick = 5
-const voidColor = "#ffd"
-const barColor = "#bd3"
-const buttonColor = "#451"
-const dotColor = "#42d"
-const lineColor = "#620"
-const selectedDotColor = "#87e"
-const selectedLineColor = "#f61"
-
-var never time.Time = time.Unix(0, 0)
+const (
+	defaultK          = 1e-9
+	armKFactor        = 1e+3
+	minK              = defaultK * .15
+	maxK              = defaultK * 5
+	defaultMass       = 5e7
+	minMass           = defaultMass * .15
+	maxMass           = defaultMass * 5
+	sizeFactor        = 5e-2
+	sizeButtonClick   = 5
+	voidColor         = "#ffd"
+	barColor          = "#bd3"
+	buttonColor       = "#451"
+	dotColor          = "#42d"
+	lineColor         = "#620"
+	selectedDotColor  = "#87e"
+	selectedLineColor = "#f61"
+)
 
 func (a *anim) newDot(x, y float64) {
-	a.dots[a.nDots] = springweb.NewNode(x, y, a.lastMass())
+	m := a.lastMass()
+	r := a.dotRadius(m)
+	a.dots[a.nDots] = springweb.NewNode(x, y, r, m)
 	a.nDots++
 }
 
+func (a *anim) newLine(i, j int) {
+	k := a.lastK()
+	a.dots[i].NewSpring(&a.dots[j], k, armKFactor*k)
+}
+
 func (a *anim) findDot(x, y float64) int {
+	outsideAllow := 1.5
+	if !a.running {
+		outsideAllow = 1.1
+	}
 	for i := 0; i < a.nDots; i++ {
 		d := a.dots[i]
-		r := a.dotRadius(d.InvMass) + a.dotSize*.2
+		r := a.dotRadius(d.M) * outsideAllow
 		if math.Pow(x-d.X, 2)+math.Pow(y-d.Y, 2) <= math.Pow(r, 2) {
 			return i
 		}
@@ -44,22 +56,15 @@ func (a *anim) findDot(x, y float64) int {
 
 type anim struct {
 	width, height, dotSize float64
-	dots, initialDots      []springweb.Node
+	dots, resetNodes       []springweb.Node
 	nDots                  int
 	selectedDot            int
+	dragging               bool
 	ctx                    js.Value
 	callback               js.Func
 	lastCall               time.Time
-	haltAnim               bool
-}
-
-func (a *anim) running() bool {
-	return a.lastCall != never
-}
-
-func (a *anim) stopRunning() {
-	a.haltAnim = true
-	a.lastCall = never
+	deltaT                 float64
+	running                bool
 }
 
 func (a *anim) buttonHeight() float64 {
@@ -70,8 +75,8 @@ func (a *anim) buttonRight(i int) float64 {
 	return float64(i+1) * a.width / 3
 }
 
-func (a *anim) dotRadius(invMass float64) float64 {
-	return a.dotSize * math.Pow(defaultMass*invMass, -.5)
+func (a *anim) dotRadius(mass float64) float64 {
+	return a.dotSize * math.Sqrt(mass/defaultMass)
 }
 
 func (a *anim) lineWidth(k float64) float64 {
@@ -106,7 +111,7 @@ func (a *anim) drawBar() {
 	for i := 0; i < 3; i++ {
 		right := a.buttonRight(i)
 		center := .5 * (left + right)
-		if i == 0 && a.running() {
+		if i == 0 && a.running {
 			y := a.buttonHeight()
 			a.ctx.Call("fillRect", center-y/2, y/4, y/2, y/2)
 			a.ctx.Call("fillRect", center+y/4, y/4, y/2, y/2)
@@ -126,7 +131,7 @@ func (a *anim) clear() {
 func (a *anim) drawDot(i int) {
 	d := a.dots[i]
 	a.ctx.Call("beginPath")
-	a.ctx.Call("arc", d.X, d.Y, a.dotRadius(d.InvMass), 0, math.Pi*2)
+	a.ctx.Call("arc", d.X, d.Y, a.dotRadius(d.M), 0, math.Pi*2)
 	a.ctx.Call("fill")
 	a.ctx.Call("closePath")
 }
@@ -143,7 +148,7 @@ func (a *anim) drawLineTo(i int, x, y, k float64) {
 func (a *anim) drawWeb() {
 	for i := 0; i < a.nDots; i++ {
 		from := a.dots[i]
-		if i == a.selectedDot && !a.running() {
+		if i == a.selectedDot && !a.running {
 			a.ctx.Set("strokeStyle", selectedLineColor)
 		} else {
 			a.ctx.Set("strokeStyle", lineColor)
@@ -193,18 +198,20 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 	doc.Get("body").Call("appendChild", elem)
 	ctx := elem.Call("getContext", "2d")
 	a := anim{width, height, dotSize,
-		make([]springweb.Node, nNodes), nil, 0, 0,
-		ctx, js.Func{}, never, false}
+		make([]springweb.Node, nNodes), nil, 0, 0, false,
+		ctx, js.Func{}, time.Time{}, 0, false}
 	a.clear()
 	a.callback = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		if a.haltAnim {
-			a.haltAnim = false
+		if !a.running {
 			return nil
 		}
 		t := time.Now()
-		if a.running() {
-			springweb.Step(a.dots, float64(t.Sub(a.lastCall)))
+		if a.running {
+			x, y := a.draggedDotPosition()
+			a.deltaT = float64(t.Sub(a.lastCall))
+			springweb.Step(a.dots[:a.nDots], a.deltaT)
 			a.borderStep()
+			a.positionDraggedDot(x, y)
 			a.clear()
 			a.drawWeb()
 		}
@@ -215,21 +222,23 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 	return &a
 }
 
-func (a *anim) playPause() {
-	if !a.running() {
-		a.initialDots = make([]springweb.Node, a.nDots)
-		copy(a.initialDots, a.dots)
+func (a *anim) toggleRunEdit() {
+	a.running = !a.running
+	if a.running {
+		a.resetNodes = make([]springweb.Node, a.nDots)
+		copy(a.resetNodes, a.dots)
+		springweb.StepsPrepare(a.dots[:a.nDots])
+		a.lastCall = time.Now()
 		js.Global().Call("requestAnimationFrame", a.callback)
 	} else {
-		copy(a.dots, a.initialDots)
-		a.stopRunning()
+		copy(a.dots, a.resetNodes)
 		a.selectedDot = a.nDots - 1
 		a.clear()
 		a.drawWeb()
 	}
 }
 
-func (a *anim) clickOnVoid(x, y float64) {
+func (a *anim) editClickVoid(x, y float64) {
 	if a.nDots == len(a.dots) {
 		return
 	}
@@ -238,27 +247,26 @@ func (a *anim) clickOnVoid(x, y float64) {
 	a.drawWeb()
 }
 
-func (a *anim) clickOnDot(i int) {
+func (a *anim) editClickDot(i int) {
 	j := a.nDots - 1
+	d := &a.dots[j]
 	if i == j {
 		a.nDots--
 		a.clear()
 		if j != 0 {
-			a.selectedDot = a.nDots - 1
+			a.selectedDot = j - 1
 			a.drawWeb()
 		}
 		return
 	}
-	d := &a.dots[j]
 	for k, _ := range d.Springs {
 		if d.Springs[k].To == &a.dots[i] {
-			d.Springs = append(d.Springs[:k], d.Springs[k+1:]...)
 			a.clear()
 			a.drawWeb()
 			return
 		}
 	}
-	d.NewSpring(&a.dots[i], a.lastK())
+	a.newLine(j, i)
 	a.drawWeb()
 }
 
@@ -277,17 +285,36 @@ func (a *anim) lastMass() float64 {
 	if a.nDots == 0 {
 		return defaultMass
 	}
-	return 1 / a.dots[a.nDots-1].InvMass
+	return a.dots[a.nDots-1].M
 }
 
 func (a *anim) clickRunning(x, y float64) {
-	node := &a.dots[a.selectedDot]
-	node.VelocityX = x - node.X
-	node.VelocityY = y - node.Y
-	node.VelocityX = 0
-	node.VelocityY = 0
-	node.X = x
-	node.Y = y
+	if i := a.findDot(x, y); i >= 0 {
+		a.selectedDot = i
+	}
+	a.dragging = true
+	a.positionDraggedDot(x, y)
+}
+
+func (a *anim) positionDraggedDot(x, y float64) {
+	if a.dragging {
+		node := &a.dots[a.selectedDot]
+		if a.deltaT > 0 {
+			node.VelocityX = (x - node.X) / a.deltaT
+			node.VelocityY = (y - node.Y) / a.deltaT
+		}
+		node.X = x
+		node.Y = y
+	}
+}
+
+func (a *anim) draggedDotPosition() (x, y float64) {
+	if a.dragging {
+		node := a.dots[a.selectedDot]
+		x = node.X
+		y = node.Y
+	}
+	return
 }
 
 func (a *anim) dotSelect(z float64) {
@@ -316,9 +343,9 @@ func (a *anim) sizeCurrent(z float64) {
 		}
 	} else {
 		d := &a.dots[j]
-		w := d.InvMass * (1 + z*sizeFactor)
-		if 1/w >= minMass && 1/w <= maxMass {
-			d.InvMass = w
+		w := d.M / (1 + z*sizeFactor)
+		if w >= minMass && w <= maxMass {
+			d.M = w
 		}
 	}
 	a.clear()
@@ -326,7 +353,7 @@ func (a *anim) sizeCurrent(z float64) {
 }
 
 func (a *anim) upDown(z float64) {
-	if a.running() {
+	if a.running {
 		a.dotSelect(z)
 	} else {
 		a.sizeCurrent(z)
@@ -335,7 +362,7 @@ func (a *anim) upDown(z float64) {
 
 func (a *anim) clickButton(x float64) {
 	if x < a.buttonRight(0) {
-		a.playPause()
+		a.toggleRunEdit()
 	} else if x < a.buttonRight(1) {
 		a.upDown(+sizeButtonClick)
 	} else {
@@ -351,41 +378,56 @@ func (a *anim) click(event js.Value) {
 		return
 	}
 
-	if a.running() {
+	if a.running {
 		a.clickRunning(x, y)
 		return
 	}
 
 	i := a.findDot(x, y)
 	if i >= 0 {
-		a.clickOnDot(i)
+		a.editClickDot(i)
 		return
 	}
 
-	a.clickOnVoid(x, y)
+	a.editClickVoid(x, y)
 }
 
 func (a *anim) wheel(event js.Value) {
-	event.Call("preventDefault")
 	z := event.Get("deltaY").Float()
 	a.upDown(z)
+}
+
+func (a *anim) pointerRelease(event js.Value) {
+	a.dragging = false
+}
+
+func (a *anim) pointerMove(event js.Value) {
+	if !a.dragging {
+		return
+	}
+	x := event.Get("clientX").Float()
+	y := event.Get("clientY").Float()
+	a.positionDraggedDot(x, y)
 }
 
 func main() {
 	height := js.Global().Get("innerHeight").Float() - 24
 	width := js.Global().Get("innerWidth").Float() - 24
 	a := newAnim(width, height, height*0.05, 128)
-	js.Global().Call("addEventListener", "pointerdown",
-		js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-			a.click(args[0])
-			return nil
-		}))
-
-	js.Global().Call("addEventListener", "wheel",
-		js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-			a.wheel(args[0])
-			return nil
-		}))
+	eventHandlers := map[string]func(js.Value){
+		"pointerdown": a.click,
+		"wheel":       a.wheel,
+		"pointerup":   a.pointerRelease,
+		"pointermove": a.pointerMove,
+	}
+	for eventName, f := range eventHandlers {
+		handler := f
+		js.Global().Call("addEventListener", eventName,
+			js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+				handler(args[0])
+				return nil
+			}))
+	}
 
 	<-make(chan bool)
 }
