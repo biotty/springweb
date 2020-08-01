@@ -261,6 +261,7 @@ func (a *anim) editClickDot(i int) {
 	}
 	for k, _ := range d.Springs {
 		if d.Springs[k].To == &a.dots[i] {
+			d.Springs = append(d.Springs[:k], d.Springs[k+1:]...)
 			a.clear()
 			a.drawWeb()
 			return
