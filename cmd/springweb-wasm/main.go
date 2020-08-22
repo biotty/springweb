@@ -61,6 +61,7 @@ type anim struct {
 	selectedDot            int
 	dragging               bool
 	ctx                    js.Value
+	img js.Value
 	callback               js.Func
 	lastCall               time.Time
 	deltaT                 float64
@@ -130,10 +131,19 @@ func (a *anim) clear() {
 
 func (a *anim) drawDot(i int) {
 	d := a.dots[i]
+	if !a.running || i == a.selectedDot{
 	a.ctx.Call("beginPath")
-	a.ctx.Call("arc", d.X, d.Y, a.dotRadius(d.M), 0, math.Pi*2)
+	a.ctx.Call("arc", d.X, d.Y, d.R, 0, math.Pi*2)
 	a.ctx.Call("fill")
 	a.ctx.Call("closePath")
+}
+if a.running{
+			a.ctx.Call("save")
+			a.ctx.Call("translate", d.X, d.Y)
+			a.ctx.Call("rotate", d.Angle)
+			a.ctx.Call("drawImage", a.img, -d.R, -d.R, d.R*2, d.R*2)
+			a.ctx.Call("restore")
+		}
 }
 
 func (a *anim) drawLineTo(i int, x, y, k float64) {
@@ -171,21 +181,21 @@ func (a *anim) borderStep() {
 	const bounceFactor float64 = -.1
 	for i := 0; i < a.nDots; i++ {
 		d := &a.dots[i]
-		if d.VelocityX < 0 && d.X < 0 {
+		if d.VelocityX < 0 && d.X < d.R {
 			d.VelocityX *= bounceFactor
-			d.X = 0
+			d.X = d.R
 		}
-		if d.VelocityY < 0 && d.Y < a.buttonHeight() {
+		if d.VelocityY < 0 && d.Y < a.buttonHeight()+d.R {
 			d.VelocityY *= bounceFactor
-			d.Y = a.buttonHeight()
+			d.Y = a.buttonHeight()+d.R
 		}
-		if d.VelocityX > 0 && d.X > a.width {
+		if d.VelocityX > 0 && d.X > a.width -d.R{
 			d.VelocityX *= bounceFactor
-			d.X = a.width
+			d.X = a.width-d.R
 		}
-		if d.VelocityY > 0 && d.Y > a.height {
+		if d.VelocityY > 0 && d.Y > a.height-d.R {
 			d.VelocityY *= bounceFactor
-			d.Y = a.height
+			d.Y = a.height-d.R
 		}
 	}
 }
@@ -196,10 +206,11 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 	elem.Set("width", width)
 	elem.Set("height", height)
 	doc.Get("body").Call("appendChild", elem)
+	img := doc.Call("getElementById", "source")
 	ctx := elem.Call("getContext", "2d")
 	a := anim{width, height, dotSize,
 		make([]springweb.Node, nNodes), nil, 0, 0, false,
-		ctx, js.Func{}, time.Time{}, 0, false}
+		ctx, img, js.Func{}, time.Time{}, 0, false}
 	a.clear()
 	a.callback = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		if !a.running {
@@ -350,6 +361,7 @@ func (a *anim) sizeCurrent(z float64) {
 		w := d.M / (1 + z*sizeFactor)
 		if w >= minMass && w <= maxMass {
 			d.M = w
+			d.R = a.dotRadius(d.M)
 		}
 	}
 	a.clear()

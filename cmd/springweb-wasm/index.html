@@ -19,7 +19,12 @@
       }
       setTimeout(() => run("main.wasm"));
     </script>
-    <style>canvas{ touch-action: manipulation; }</style>
+    <style>
+      canvas{ touch-action: manipulation; }
+      img{ display: none; }
+    </style>
   </head>
-  <body></body>
+  <body>
+    <img id="source" src="map.png">
+  </body>
 </html>

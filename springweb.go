@@ -2,21 +2,24 @@ package springweb
 
 import "math"
 
+var ArmResist float64 = 1e-8
+var SpringResist float64 = 1e-9
+
 type Arm struct {
-	K, w, InitAngle, PrevAngle float64
+	K, w, InitAngle, PrevAngle, prevAngleUnrest float64
 	Rotations                  int
 }
 
 type Spring struct {
 	To             *Node
-	Distance, K    float64
+	K,Distance,prevDistance    float64
 	FromArm, ToArm Arm
 }
 
 type Node struct {
 	X, Y, R, M             float64
 	VelocityX, VelocityY   float64
-	rotationAngle, wAvgSum float64
+	Angle, wAvgSum float64
 	Springs                []Spring
 }
 
@@ -56,10 +59,11 @@ func NewNode(x, y, r, m float64) Node {
 }
 
 func (node *Node) NewSpring(to *Node, k, a float64) {
+	d := distance(node, to)
 	node.Springs = append(node.Springs,
-		Spring{to, distance(node, to), k,
-			Arm{a, 0, node.angle(to), 0, 0},
-			Arm{a, 0, to.angle(node), 0, 0}})
+		Spring{to, k, d, d,
+			Arm{a, 0, node.angle(to), 0, 0, 0},
+			Arm{a, 0, to.angle(node), 0, 0, 0}})
 }
 
 func (node *Node) accelerate(forceX, forceY, duration float64) {
@@ -75,6 +79,13 @@ func (s *Spring) bounce(node *Node, duration float64) {
 	xDiffN := xDiff / actualDistance
 	yDiffN := yDiff / actualDistance
 	contractF := s.K * (actualDistance - s.Distance)
+	distIncr := actualDistance - s.prevDistance
+	s.prevDistance = actualDistance
+	if distIncr > 0 {
+		contractF += SpringResist
+	} else {
+		contractF -= SpringResist
+	}
 	forceX := xDiffN * contractF
 	forceY := yDiffN * contractF
 	impactDepth := (node.R + s.To.R) - actualDistance
@@ -99,20 +110,28 @@ func (arm *Arm) updateAngle(angle float64) {
 	}
 }
 
-func (arm *Arm) rotationAngle() float64 {
+func (arm *Arm) Angle() float64 {
 	return arm.PrevAngle + float64(arm.Rotations)*math.Pi*2
 }
 
 func (node *Node) torque(arm *Arm, to *Node, duration float64) {
 	d := distance(node, to)
 	arm.w = arm.K / d
-	rotationAngle := arm.rotationAngle()
-	restRotationAngle := arm.InitAngle + node.rotationAngle
-	normalizeAndTorqueF := (restRotationAngle - rotationAngle) * arm.w / d
+	Angle := arm.Angle()
+	restAngle := arm.InitAngle + node.Angle
+	angleUnrest := Angle - restAngle
+	unrestIncr := angleUnrest - arm.prevAngleUnrest
+	arm.prevAngleUnrest = angleUnrest
+	if unrestIncr > 0 {
+		angleUnrest += ArmResist*d
+	} else if unrestIncr < 0 {
+		angleUnrest -= ArmResist*d
+	}
+	normalizeAndTorqueF := angleUnrest * arm.w / d
 	forceX := (to.Y - node.Y) * normalizeAndTorqueF
 	forceY := (node.X - to.X) * normalizeAndTorqueF
-	node.accelerate(forceX, forceY, duration)
-	to.accelerate(-forceX, -forceY, duration)
+	node.accelerate(-forceX, -forceY, duration)
+	to.accelerate(forceX, forceY, duration)
 }
 
 func (s *Spring) torque(node *Node, duration float64) {
@@ -133,7 +152,7 @@ func (node *Node) move(duration float64) {
 }
 
 func (node *Node) avgRotationsPrepare() {
-	node.rotationAngle = 0
+	node.Angle = 0
 	node.wAvgSum = 0
 }
 
@@ -148,12 +167,12 @@ func avgRotations(nodes []Node) {
 			s.FromArm.updateAngle(n.angle(t))
 			s.ToArm.updateAngle(t.angle(n))
 
-			n.rotationAngle += (s.FromArm.rotationAngle() - s.FromArm.InitAngle) * s.FromArm.w
-			t.rotationAngle += (s.ToArm.rotationAngle() - s.ToArm.InitAngle) * s.ToArm.w
+			n.Angle += (s.FromArm.Angle() - s.FromArm.InitAngle) * s.FromArm.w
+			t.Angle += (s.ToArm.Angle() - s.ToArm.InitAngle) * s.ToArm.w
 			n.wAvgSum += s.FromArm.w
 			t.wAvgSum += s.ToArm.w
 		}
-		n.rotationAngle /= n.wAvgSum
+		n.Angle /= n.wAvgSum
 	}
 }
 
