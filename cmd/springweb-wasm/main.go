@@ -40,9 +40,9 @@ func (a *anim) newLine(i, j int) {
 }
 
 func (a *anim) findDot(x, y float64) int {
-	outsideAllow := 1.5
+	outsideAllow := 1.7
 	if !a.running {
-		outsideAllow = 1.1
+		outsideAllow = 1.3
 	}
 	for i := 0; i < a.nDots; i++ {
 		d := a.dots[i]
@@ -208,7 +208,10 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 		t := time.Now()
 		if a.running {
 			x, y := a.draggedDotPosition()
-			a.deltaT = float64(t.Sub(a.lastCall))
+			deltaT := float64(t.Sub(a.lastCall))
+			if a.deltaT == 0 || deltaT < a.deltaT * 9 {
+				a.deltaT = deltaT
+			}
 			springweb.Step(a.dots[:a.nDots], a.deltaT)
 			a.borderStep()
 			a.positionDraggedDot(x, y)

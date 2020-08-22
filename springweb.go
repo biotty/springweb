@@ -79,8 +79,8 @@ func (s *Spring) bounce(node *Node, duration float64) {
 	forceY := yDiffN * contractF
 	impactDepth := (node.R + s.To.R) - actualDistance
 	if impactDepth > 0 {
-		maxDepth := math.Min(node.R, s.To.R)
-		elasticF := impactDepth * s.K * s.Distance / maxDepth
+		refDepth := math.Min(node.R, s.To.R)
+		elasticF := s.K * s.Distance * impactDepth / refDepth
 		forceX -= xDiffN * elasticF
 		forceY -= yDiffN * elasticF
 	}
@@ -122,7 +122,7 @@ func (s *Spring) torque(node *Node, duration float64) {
 
 func (node *Node) move(duration float64) {
 	dMove := duration * distanceXY(node.VelocityX, node.VelocityY)
-	rMove := node.R * .5
+	rMove := node.R * .9
 	if dMove > rMove {
 		velocityCap := rMove / dMove
 		node.VelocityX *= velocityCap
