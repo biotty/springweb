@@ -9,17 +9,20 @@ import (
 )
 
 const (
-	defaultK          = 1.
-	armKFactor        = 1e3
+	defaultK          = 1.     // note: K (and dependent armK) seems depending on dotSize
+	armKFactor        = 1e3    //       as the model operates on the distances provided directly
 	minK              = defaultK * .15
 	maxK              = defaultK * 5
 	defaultMass       = 1e-2
 	minMass           = defaultMass * .15
 	maxMass           = defaultMass * 5
-	gravity           = 2e2
-	maxDriveAngleVelocity = 1e1
-	sizeFactor        = 5e-2
-	sizeButtonClick   = 5
+	gravity           = 2e2    // note: dep. on dotSize.  make independent by multiplying at calc.
+	maxWheelForce = 1.5        //       idem
+	maxWheelVelocity = 2e1     // note: measured in dotSize as unit, so constant not dep. on dotSize
+	wheelGyrationFactor = 7e-1 // note: deps as explained
+	wheelDriveArmFactor = 3e-1 //       idem .. but maybe not this one, as it is purely angular
+	sizeFactor        = 5e-2   //       (but seems the related maxWheelForce is dep on scale ..)
+	sizeButtonClick   = 5.
 	voidColor         = "#ffd"
 	barColor          = "#bd3"
 	buttonColor       = "#451"
@@ -67,10 +70,10 @@ type anim struct {
 	callback               js.Func
 	lastCall               time.Time
 	deltaT                 float64
-	freeWheelAngleVelocity      float64
-	freeWheelAngle              float64
-	driverWheelAngle float64
-	driverWheelAngleVelocity float64
+	wheelForce float64
+	nWheels int
+	wheelAngleVelocity      []float64
+	wheelAngle              []float64
 	running                bool
 	keyisdown              bool
 }
@@ -149,12 +152,11 @@ func (a *anim) drawDot(i int) {
 		a.ctx.Call("closePath")
 	}
 	if a.running {
-		img := a.images[i%2]
+		img := a.images[0]
 		b := d.Angle
-		if i == 0 {
-			b = a.freeWheelAngle
-		} else if i == 1 {
-			b += a.driverWheelAngle
+		if i < a.nWheels {
+			img = a.images[1]
+			b += a.wheelAngle[i]  // alt: =
 		}
 		a.ctx.Call("save")
 		a.ctx.Call("translate", d.X, d.Y)
@@ -229,27 +231,23 @@ func (a *anim) gravityStep(deltaT float64) {
 	}
 }
 
-func (a *anim) freeWheelRotation(deltaT float64) {
-	if a.nDots <= 0 {
+func (a *anim) wheelRotation(deltaT float64, i int) {
+	if a.nDots <= i {
 		return
 	}
-	d := &a.dots[0]
+	d := &a.dots[i]
 	if d.Y > a.height-d.R*1.1 {
-		a.freeWheelAngleVelocity = d.VelocityX / d.R
+		a.wheelAngleVelocity[i] = d.VelocityX / d.R
+		if (a.wheelForce > 0 && d.VelocityX < maxWheelVelocity*a.dotSize) || (a.wheelForce < 0 && d.VelocityX > -maxWheelVelocity*a.dotSize){
+			d.VelocityX += d.R*a.wheelForce*deltaT/d.M
+			d.Angle -= a.wheelForce*wheelDriveArmFactor
+		}
+	} else {
+		if (a.wheelForce > 0 && a.wheelAngleVelocity[i]*d.R < maxWheelVelocity*a.dotSize) || (a.wheelForce < 0 && a.wheelAngleVelocity[i]*d.R > -maxWheelVelocity*a.dotSize){
+			a.wheelAngleVelocity[i] += a.wheelForce*deltaT/(d.M*wheelGyrationFactor)
+		}
 	}
-	a.freeWheelAngle += a.freeWheelAngleVelocity * deltaT
-}
-
-func (a *anim) driverWheelRotation(deltaT float64) {
-	if a.nDots <= 1 {
-		return
-	}
-
-	a.driverWheelAngle += deltaT*a.driverWheelAngleVelocity
-	// todo: adjust all so all deltaT is in secs
-	// dots[1] todo if on floor,
-	// exert force as difference in edge (Atan2..) and the floor
-	// (thereby also elaborate thus the freeAngleVelocity behavior)
+	a.wheelAngle[i] += a.wheelAngleVelocity[i] * deltaT
 }
 
 func newAnim(width, height, dotSize float64, nNodes int) *anim {
@@ -265,7 +263,8 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 	ctx := elem.Call("getContext", "2d")
 	a := anim{width, height, dotSize,
 		make([]springweb.Node, nNodes), nil, 0, 0, false,
-		ctx, images, js.Func{}, time.Time{}, 0, 0, 0, 0, 0, false, false}
+		ctx, images, js.Func{}, time.Time{}, 0, 0,
+		2, make([]float64, 2), make([]float64, 2), false, false}
 	a.clear()
 	a.callback = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		if !a.running {
@@ -279,8 +278,9 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 				a.deltaT = deltaT
 			}
 			springweb.Step(a.dots[:a.nDots], a.deltaT)
-			a.freeWheelRotation(a.deltaT)
-			a.driverWheelRotation(a.deltaT)
+			for i := 0; i < a.nWheels; i++ {
+				a.wheelRotation(a.deltaT, i)
+			}
 			a.borderStep()
 			a.gravityStep(a.deltaT)
 			a.positionDraggedDot(x, y)
@@ -462,7 +462,7 @@ func (a *anim) click(event js.Value) {
 	a.editClickVoid(x, y)
 }
 
-func (a *anim) wheel(event js.Value) {
+func (a *anim) pointerWheel(event js.Value) {
 	z := event.Get("deltaY").Float()
 	a.upDown(z)
 }
@@ -480,7 +480,7 @@ func (a *anim) pointerMove(event js.Value) {
 		y := event.Get("clientY").Float()
 		a.positionDraggedDot(x, y)
 	}
-	a.driverWheelAngleVelocity = (2*x / a.width - 1)*maxDriveAngleVelocity
+	a.wheelForce = (2*x / a.width - 1) * maxWheelForce
 }
 
 func (a *anim) keyup(event js.Value) {
@@ -511,7 +511,7 @@ func main() {
 	a := newAnim(width, height, height*0.05, 128)
 	eventHandlers := map[string]func(js.Value){
 		"pointerdown": a.click,
-		"wheel":       a.wheel,
+		"wheel":       a.pointerWheel,
 		"pointerup":   a.pointerRelease,
 		"pointermove": a.pointerMove,
 		"keyup":       a.keyup,
