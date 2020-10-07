@@ -2,8 +2,8 @@ package springweb
 
 import "math"
 
-var ArmResist float64 = 1e-8
-var SpringResist float64 = 1e-9
+var ArmResist float64 = 1e-3
+var SpringResist float64 = 1e-3
 
 type Arm struct {
 	K, w, InitAngle, PrevAngle, prevAngleUnrest float64
@@ -83,7 +83,7 @@ func (s *Spring) bounce(node *Node, duration float64) {
 	s.prevDistance = actualDistance
 	if distIncr > 0 {
 		contractF += SpringResist
-	} else {
+	} else if distIncr < -0 {
 		contractF -= SpringResist
 	}
 	forceX := xDiffN * contractF
@@ -124,7 +124,7 @@ func (node *Node) torque(arm *Arm, to *Node, duration float64) {
 	arm.prevAngleUnrest = angleUnrest
 	if unrestIncr > 0 {
 		angleUnrest += ArmResist*d
-	} else if unrestIncr < 0 {
+	} else if unrestIncr < -0 {
 		angleUnrest -= ArmResist*d
 	}
 	normalizeAndTorqueF := angleUnrest * arm.w / d

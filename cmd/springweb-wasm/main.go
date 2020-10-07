@@ -9,22 +9,24 @@ import (
 )
 
 const (
-	defaultK          = 1e-9
-	armKFactor        = 1e+3
+	defaultK          = 1.
+	armKFactor        = 1e3
 	minK              = defaultK * .15
 	maxK              = defaultK * 5
-	defaultMass       = 5e7
+	defaultMass       = 1e-2
 	minMass           = defaultMass * .15
 	maxMass           = defaultMass * 5
+	gravity           = 2e2
+	maxDriveAngleVelocity = 1e1
 	sizeFactor        = 5e-2
 	sizeButtonClick   = 5
 	voidColor         = "#ffd"
 	barColor          = "#bd3"
 	buttonColor       = "#451"
 	dotColor          = "#42d"
-	lineColor         = "#620"
 	selectedDotColor  = "#87e"
-	selectedLineColor = "#f61"
+	lineColor         = "rgba(96, 32, 0, 0.2)"
+	selectedLineColor = "rgba(255, 96, 16, 0.5)"
 )
 
 func (a *anim) newDot(x, y float64) {
@@ -61,11 +63,16 @@ type anim struct {
 	selectedDot            int
 	dragging               bool
 	ctx                    js.Value
-	img js.Value
+	images                 []js.Value
 	callback               js.Func
 	lastCall               time.Time
 	deltaT                 float64
+	freeWheelAngleVelocity      float64
+	freeWheelAngle              float64
+	driverWheelAngle float64
+	driverWheelAngleVelocity float64
 	running                bool
+	keyisdown              bool
 }
 
 func (a *anim) buttonHeight() float64 {
@@ -131,19 +138,30 @@ func (a *anim) clear() {
 
 func (a *anim) drawDot(i int) {
 	d := a.dots[i]
-	if !a.running || i == a.selectedDot{
-	a.ctx.Call("beginPath")
-	a.ctx.Call("arc", d.X, d.Y, d.R, 0, math.Pi*2)
-	a.ctx.Call("fill")
-	a.ctx.Call("closePath")
-}
-if a.running{
-			a.ctx.Call("save")
-			a.ctx.Call("translate", d.X, d.Y)
-			a.ctx.Call("rotate", d.Angle)
-			a.ctx.Call("drawImage", a.img, -d.R, -d.R, d.R*2, d.R*2)
-			a.ctx.Call("restore")
+	if !a.running || i == a.selectedDot {
+		r := d.R
+		if a.running {
+			r *= 1.1
 		}
+		a.ctx.Call("beginPath")
+		a.ctx.Call("arc", d.X, d.Y, r, 0, math.Pi*2)
+		a.ctx.Call("fill")
+		a.ctx.Call("closePath")
+	}
+	if a.running {
+		img := a.images[i%2]
+		b := d.Angle
+		if i == 0 {
+			b = a.freeWheelAngle
+		} else if i == 1 {
+			b += a.driverWheelAngle
+		}
+		a.ctx.Call("save")
+		a.ctx.Call("translate", d.X, d.Y)
+		a.ctx.Call("rotate", b)
+		a.ctx.Call("drawImage", img, -d.R, -d.R, d.R*2, d.R*2)
+		a.ctx.Call("restore")
+	}
 }
 
 func (a *anim) drawLineTo(i int, x, y, k float64) {
@@ -156,6 +174,7 @@ func (a *anim) drawLineTo(i int, x, y, k float64) {
 }
 
 func (a *anim) drawWeb() {
+	a.clear()
 	for i := 0; i < a.nDots; i++ {
 		from := a.dots[i]
 		if i == a.selectedDot && !a.running {
@@ -178,7 +197,7 @@ func (a *anim) drawWeb() {
 }
 
 func (a *anim) borderStep() {
-	const bounceFactor float64 = -.1
+	const bounceFactor float64 = -.65
 	for i := 0; i < a.nDots; i++ {
 		d := &a.dots[i]
 		if d.VelocityX < 0 && d.X < d.R {
@@ -187,17 +206,50 @@ func (a *anim) borderStep() {
 		}
 		if d.VelocityY < 0 && d.Y < a.buttonHeight()+d.R {
 			d.VelocityY *= bounceFactor
-			d.Y = a.buttonHeight()+d.R
+			d.Y = a.buttonHeight() + d.R
 		}
-		if d.VelocityX > 0 && d.X > a.width -d.R{
+		if d.VelocityX > 0 && d.X > a.width-d.R {
 			d.VelocityX *= bounceFactor
-			d.X = a.width-d.R
+			d.X = a.width - d.R
 		}
 		if d.VelocityY > 0 && d.Y > a.height-d.R {
 			d.VelocityY *= bounceFactor
-			d.Y = a.height-d.R
+			d.Y = a.height - d.R
 		}
 	}
+}
+
+func (a *anim) gravityStep(deltaT float64) {
+	g := gravity
+	for i := 0; i < a.nDots; i++ {
+		d := &a.dots[i]
+		if d.Y < a.height - d.R {
+			d.VelocityY += g * deltaT
+		}
+	}
+}
+
+func (a *anim) freeWheelRotation(deltaT float64) {
+	if a.nDots <= 0 {
+		return
+	}
+	d := &a.dots[0]
+	if d.Y > a.height-d.R*1.1 {
+		a.freeWheelAngleVelocity = d.VelocityX / d.R
+	}
+	a.freeWheelAngle += a.freeWheelAngleVelocity * deltaT
+}
+
+func (a *anim) driverWheelRotation(deltaT float64) {
+	if a.nDots <= 1 {
+		return
+	}
+
+	a.driverWheelAngle += deltaT*a.driverWheelAngleVelocity
+	// todo: adjust all so all deltaT is in secs
+	// dots[1] todo if on floor,
+	// exert force as difference in edge (Atan2..) and the floor
+	// (thereby also elaborate thus the freeAngleVelocity behavior)
 }
 
 func newAnim(width, height, dotSize float64, nNodes int) *anim {
@@ -206,11 +258,14 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 	elem.Set("width", width)
 	elem.Set("height", height)
 	doc.Get("body").Call("appendChild", elem)
-	img := doc.Call("getElementById", "source")
+	images := []js.Value{
+		doc.Call("getElementById", "image0"),
+		doc.Call("getElementById", "image1"),
+	}
 	ctx := elem.Call("getContext", "2d")
 	a := anim{width, height, dotSize,
 		make([]springweb.Node, nNodes), nil, 0, 0, false,
-		ctx, img, js.Func{}, time.Time{}, 0, false}
+		ctx, images, js.Func{}, time.Time{}, 0, 0, 0, 0, 0, false, false}
 	a.clear()
 	a.callback = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		if !a.running {
@@ -219,14 +274,16 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 		t := time.Now()
 		if a.running {
 			x, y := a.draggedDotPosition()
-			deltaT := float64(t.Sub(a.lastCall))
-			if a.deltaT == 0 || deltaT < a.deltaT * 9 {
+			deltaT := 1e-9*float64(t.Sub(a.lastCall))
+			if a.deltaT == 0 || deltaT < a.deltaT*9 {
 				a.deltaT = deltaT
 			}
 			springweb.Step(a.dots[:a.nDots], a.deltaT)
+			a.freeWheelRotation(a.deltaT)
+			a.driverWheelRotation(a.deltaT)
 			a.borderStep()
+			a.gravityStep(a.deltaT)
 			a.positionDraggedDot(x, y)
-			a.clear()
 			a.drawWeb()
 		}
 		a.lastCall = t
@@ -247,7 +304,6 @@ func (a *anim) toggleRunEdit() {
 	} else {
 		copy(a.dots, a.resetNodes)
 		a.selectedDot = a.nDots - 1
-		a.clear()
 		a.drawWeb()
 	}
 }
@@ -266,23 +322,18 @@ func (a *anim) editClickDot(i int) {
 	d := &a.dots[j]
 	if i == j {
 		a.nDots--
-		a.clear()
 		if j != 0 {
 			a.selectedDot = j - 1
-			a.drawWeb()
 		}
 		return
 	}
 	for k, _ := range d.Springs {
 		if d.Springs[k].To == &a.dots[i] {
 			d.Springs = append(d.Springs[:k], d.Springs[k+1:]...)
-			a.clear()
-			a.drawWeb()
 			return
 		}
 	}
 	a.newLine(j, i)
-	a.drawWeb()
 }
 
 func (a *anim) lastK() float64 {
@@ -315,8 +366,8 @@ func (a *anim) positionDraggedDot(x, y float64) {
 	if a.dragging {
 		node := &a.dots[a.selectedDot]
 		if a.deltaT > 0 {
-			node.VelocityX = (x - node.X) / a.deltaT
-			node.VelocityY = (y - node.Y) / a.deltaT
+			node.VelocityX = .1 * (9*node.VelocityX + (x-node.X)/a.deltaT)
+			node.VelocityY = .1 * (9*node.VelocityY + (y-node.Y)/a.deltaT)
 		}
 		node.X = x
 		node.Y = y
@@ -347,6 +398,9 @@ func (a *anim) dotSelect(z float64) {
 }
 
 func (a *anim) sizeCurrent(z float64) {
+	if a.nDots <= 0 {
+		return
+	}
 	j := a.nDots - 1
 	d := a.dots[j]
 	n := len(d.Springs)
@@ -364,7 +418,6 @@ func (a *anim) sizeCurrent(z float64) {
 			d.R = a.dotRadius(d.M)
 		}
 	}
-	a.clear()
 	a.drawWeb()
 }
 
@@ -402,6 +455,7 @@ func (a *anim) click(event js.Value) {
 	i := a.findDot(x, y)
 	if i >= 0 {
 		a.editClickDot(i)
+		a.drawWeb()
 		return
 	}
 
@@ -418,12 +472,37 @@ func (a *anim) pointerRelease(event js.Value) {
 }
 
 func (a *anim) pointerMove(event js.Value) {
-	if !a.dragging {
+	if !a.running {
 		return
 	}
 	x := event.Get("clientX").Float()
-	y := event.Get("clientY").Float()
-	a.positionDraggedDot(x, y)
+	if a.dragging {
+		y := event.Get("clientY").Float()
+		a.positionDraggedDot(x, y)
+	}
+	a.driverWheelAngleVelocity = (2*x / a.width - 1)*maxDriveAngleVelocity
+}
+
+func (a *anim) keyup(event js.Value) {
+	a.keyisdown = false
+}
+
+func (a *anim) keydown(event js.Value) {
+	if a.keyisdown {
+		return
+	}
+	a.keyisdown = true
+	switch event.Get("code").String() {
+	case "ArrowDown":
+		event.Call("preventDefault")
+		a.upDown(+sizeButtonClick)
+	case "ArrowUp":
+		event.Call("preventDefault")
+		a.upDown(-sizeButtonClick)
+	case "ArrowRight":
+		event.Call("preventDefault")
+		a.toggleRunEdit()
+	}
 }
 
 func main() {
@@ -435,6 +514,8 @@ func main() {
 		"wheel":       a.wheel,
 		"pointerup":   a.pointerRelease,
 		"pointermove": a.pointerMove,
+		"keyup":       a.keyup,
+		"keydown":     a.keydown,
 	}
 	for eventName, f := range eventHandlers {
 		handler := f

@@ -6,25 +6,17 @@
     <meta name="description" content="Web of Springs" />
     <script src="wasm_exec.js"></script>
     <script>
-      async function run(fileUrl) {
-        try {
-          const file = await fetch(fileUrl);
-          const buffer = await file.arrayBuffer();
-          const go = new Go();
-          const { instance } = await WebAssembly.instantiate(buffer, go.importObject);
-          go.run(instance);
-        } catch (err) {
-          console.error(err);
-        }
-      }
-      setTimeout(() => run("main.wasm"));
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch('main.wasm'), go.importObject)
+      .then(obj => go.run(obj.instance));
     </script>
     <style>
-      canvas{ touch-action: manipulation; }
+      canvas{ touch-action: none; }
       img{ display: none; }
     </style>
   </head>
   <body>
-    <img id="source" src="map.png">
+    <img id="image0" src="0.png">
+    <img id="image1" src="1.png">
   </body>
 </html>
