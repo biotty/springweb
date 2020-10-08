@@ -141,7 +141,7 @@ func (s *Spring) torque(node *Node, duration float64) {
 
 func (node *Node) move(duration float64) {
 	dMove := duration * distanceXY(node.VelocityX, node.VelocityY)
-	rMove := node.R * .9
+	rMove := node.R * .6
 	if dMove > rMove {
 		velocityCap := rMove / dMove
 		node.VelocityX *= velocityCap

@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"math/rand"
 	"syscall/js"
 	"time"
 
@@ -9,27 +10,31 @@ import (
 )
 
 const (
-	defaultK          = 1.     // note: K (and dependent armK) seems depending on dotSize
-	armKFactor        = 1e3    //       as the model operates on the distances provided directly
-	minK              = defaultK * .15
-	maxK              = defaultK * 5
-	defaultMass       = 1e-2
-	minMass           = defaultMass * .15
-	maxMass           = defaultMass * 5
-	gravity           = 2e2    // note: dep. on dotSize.  make independent by multiplying at calc.
-	maxWheelForce = 1.5        //       idem
-	maxWheelVelocity = 2e1     // note: measured in dotSize as unit, so constant not dep. on dotSize
+	defaultK            = 1.  // note: K (and dependent armK) seems depending on dotSize
+	armKFactor          = 1e3 //       as the model operates on the distances provided directly
+	minK                = defaultK * .15
+	maxK                = defaultK * 5
+	defaultMass         = 1e-2
+	minMass             = defaultMass * .15
+	maxMass             = defaultMass * 5
+	bounceFactor        = -.65
+	gravity             = 3e2  // note: dep. on dotSize.  make independent by multiplying at calc.
+	maxWheelForce       = 1.1  //       idem
+	maxWheelVelocity    = 1e1  // note: measured in dotSize as unit, so constant not dep. on dotSize
 	wheelGyrationFactor = 7e-1 // note: deps as explained
 	wheelDriveArmFactor = 3e-1 //       idem .. but maybe not this one, as it is purely angular
-	sizeFactor        = 5e-2   //       (but seems the related maxWheelForce is dep on scale ..)
-	sizeButtonClick   = 5.
-	voidColor         = "#ffd"
-	barColor          = "#bd3"
-	buttonColor       = "#451"
-	dotColor          = "#42d"
-	selectedDotColor  = "#87e"
-	lineColor         = "rgba(96, 32, 0, 0.2)"
-	selectedLineColor = "rgba(255, 96, 16, 0.5)"
+	sizeFactor          = 5e-2 //       (but seems the related maxWheelForce is dep on scale ..)
+	sizeButtonClick     = 5.
+	voidColor           = "#ffd"
+	barColor            = "#bd3"
+	buttonColor         = "#451"
+	dotColor            = "#42d"
+	selectedDotColor    = "#87e"
+	lineColor           = "rgba(96, 32, 0, 0.2)"
+	selectedLineColor   = "rgba(255, 96, 16, 0.5)"
+	platformColor       = "rgba(0, 128, 128, 0.5)"
+	rightForceColor     = "rgba(0, 0, 255, 0.2)"
+	leftForceColor      = "rgba(255, 0, 0, 0.2)"
 )
 
 func (a *anim) newDot(x, y float64) {
@@ -59,10 +64,32 @@ func (a *anim) findDot(x, y float64) int {
 	return -1
 }
 
+type wheel struct {
+	angleVelocity     float64
+	angle             float64
+	onPlatform        int
+}
+
+type platform struct {
+	left, right, y float64
+}
+
+func (p *platform) border(d *springweb.Node) bool {
+	yUpper := d.Y + d.R*.4 // quantity: on the cap on v in springweb move
+	yLower := d.Y + d.R
+	if d.X > p.left && d.X < p.right && p.y > yUpper && p.y < yLower {
+		d.VelocityY *= bounceFactor  // assume: VelocityY > 0 already checked
+		d.Y = p.y - d.R  // improve: a little sudden (alt: triangular at right and left)
+		return true
+	}
+	return false
+}
+
 type anim struct {
 	width, height, dotSize float64
 	dots, resetNodes       []springweb.Node
 	nDots                  int
+	nGassDots int
 	selectedDot            int
 	dragging               bool
 	ctx                    js.Value
@@ -70,12 +97,14 @@ type anim struct {
 	callback               js.Func
 	lastCall               time.Time
 	deltaT                 float64
-	wheelForce float64
-	nWheels int
-	wheelAngleVelocity      []float64
-	wheelAngle              []float64
 	running                bool
 	keyisdown              bool
+	viewX float64
+	wheelForce             float64
+	wheels []wheel
+	nWheels                int
+	platforms              []platform
+	nPlatforms             int
 }
 
 func (a *anim) buttonHeight() float64 {
@@ -133,6 +162,20 @@ func (a *anim) drawBar() {
 	}
 }
 
+func (a *anim) drawControl() {
+	color := rightForceColor
+	x := a.width * .5
+	w := x * a.wheelForce / maxWheelForce
+	if w < 0 {
+		color = leftForceColor
+		w = -w
+		x -= w
+	}
+	a.ctx.Set("fillStyle", color)
+	y := a.buttonHeight()
+	a.ctx.Call("fillRect", x, y, w, y*.5)
+}
+
 func (a *anim) clear() {
 	a.ctx.Set("fillStyle", voidColor)
 	a.ctx.Call("fillRect", 0, a.buttonHeight(), a.width, a.height)
@@ -147,7 +190,7 @@ func (a *anim) drawDot(i int) {
 			r *= 1.1
 		}
 		a.ctx.Call("beginPath")
-		a.ctx.Call("arc", d.X, d.Y, r, 0, math.Pi*2)
+		a.ctx.Call("arc", d.X - a.viewX, d.Y, r, 0, math.Pi*2)
 		a.ctx.Call("fill")
 		a.ctx.Call("closePath")
 	}
@@ -156,10 +199,10 @@ func (a *anim) drawDot(i int) {
 		b := d.Angle
 		if i < a.nWheels {
 			img = a.images[1]
-			b += a.wheelAngle[i]  // alt: =
+			b += a.wheels[i].angle // alt: =
 		}
 		a.ctx.Call("save")
-		a.ctx.Call("translate", d.X, d.Y)
+		a.ctx.Call("translate", d.X - a.viewX, d.Y)
 		a.ctx.Call("rotate", b)
 		a.ctx.Call("drawImage", img, -d.R, -d.R, d.R*2, d.R*2)
 		a.ctx.Call("restore")
@@ -170,8 +213,8 @@ func (a *anim) drawLineTo(i int, x, y, k float64) {
 	d := a.dots[i]
 	a.ctx.Set("lineWidth", a.lineWidth(k))
 	a.ctx.Call("beginPath")
-	a.ctx.Call("moveTo", d.X, d.Y)
-	a.ctx.Call("lineTo", x, y)
+	a.ctx.Call("moveTo", d.X - a.viewX, d.Y)
+	a.ctx.Call("lineTo", x - a.viewX, y)
 	a.ctx.Call("stroke")
 }
 
@@ -198,56 +241,119 @@ func (a *anim) drawWeb() {
 	}
 }
 
-func (a *anim) borderStep() {
-	const bounceFactor float64 = -.65
+func (a *anim) drawPlatforms() {
+	h := a.dotSize *.5
+	a.ctx.Set("strokeStyle", platformColor)
+	for i := 0; i < a.nPlatforms; i++ {
+		p := a.platforms[i]
+		a.ctx.Set("lineWidth", h)
+		y := p.y + h * .5
+		a.ctx.Call("beginPath")
+		a.ctx.Call("moveTo", p.left - a.viewX, y)
+		a.ctx.Call("lineTo", p.right - a.viewX, y)
+		a.ctx.Call("stroke")
+	}
+}
+
+func (a *anim) platformsStep() {
+	// idea: dots are the car, but also the other "objects", by >= nCar
 	for i := 0; i < a.nDots; i++ {
 		d := &a.dots[i]
-		if d.VelocityX < 0 && d.X < d.R {
-			d.VelocityX *= bounceFactor
-			d.X = d.R
+		if i >= a.nWheels && i < a.nGassDots {
+			continue  // note: avoid car hooked stuck
 		}
-		if d.VelocityY < 0 && d.Y < a.buttonHeight()+d.R {
-			d.VelocityY *= bounceFactor
-			d.Y = a.buttonHeight() + d.R
+		if d.VelocityY <= 0 {
+			continue  // note: instead of in per-platform check
 		}
-		if d.VelocityX > 0 && d.X > a.width-d.R {
-			d.VelocityX *= bounceFactor
-			d.X = a.width - d.R
-		}
-		if d.VelocityY > 0 && d.Y > a.height-d.R {
-			d.VelocityY *= bounceFactor
-			d.Y = a.height - d.R
+		// optimize: if d.VelocityY <= 0 then CONTINUE instead of cond in platform.border
+		// optimize: if wheel.OnPlatform then check that platform first
+		for j := 0; j < a.nPlatforms; j++ {
+			if a.platforms[j].border(&a.dots[i]) {
+				if i < a.nWheels {
+					a.wheels[i].onPlatform = j
+				}
+				break
+			}
 		}
 	}
 }
 
-func (a *anim) gravityStep(deltaT float64) {
+func (a *anim) gravityStep() {
 	g := gravity
 	for i := 0; i < a.nDots; i++ {
 		d := &a.dots[i]
-		if d.Y < a.height - d.R {
-			d.VelocityY += g * deltaT
+		if d.Y < a.height-d.R {
+			d.VelocityY += g * a.deltaT
 		}
 	}
 }
 
-func (a *anim) wheelRotation(deltaT float64, i int) {
-	if a.nDots <= i {
-		return
+func (a *anim) wheelVelocityBelowMax(velocityX float64) bool {
+	if a.wheelForce > 0 && velocityX < maxWheelVelocity*a.dotSize {
+		return true
 	}
+	if a.wheelForce < 0 && velocityX > -maxWheelVelocity*a.dotSize {
+		return true
+	}
+	return false
+}
+
+func (a *anim) wheelRotation(i int) {
 	d := &a.dots[i]
-	if d.Y > a.height-d.R*1.1 {
-		a.wheelAngleVelocity[i] = d.VelocityX / d.R
-		if (a.wheelForce > 0 && d.VelocityX < maxWheelVelocity*a.dotSize) || (a.wheelForce < 0 && d.VelocityX > -maxWheelVelocity*a.dotSize){
-			d.VelocityX += d.R*a.wheelForce*deltaT/d.M
-			d.Angle -= a.wheelForce*wheelDriveArmFactor
+	w := &a.wheels[i]
+	j := w.onPlatform
+	if j >= 0 {
+		if d.Y+d.R*1.1 < a.platforms[j].y {
+			w.onPlatform = -1
+		}
+	}
+
+	if w.onPlatform >= 0 {
+		w.angleVelocity = d.VelocityX / d.R
+		if a.wheelVelocityBelowMax(d.VelocityX) {
+			d.VelocityX += d.R * a.wheelForce * a.deltaT / d.M
+			d.Angle -= a.wheelForce * wheelDriveArmFactor
 		}
 	} else {
-		if (a.wheelForce > 0 && a.wheelAngleVelocity[i]*d.R < maxWheelVelocity*a.dotSize) || (a.wheelForce < 0 && a.wheelAngleVelocity[i]*d.R > -maxWheelVelocity*a.dotSize){
-			a.wheelAngleVelocity[i] += a.wheelForce*deltaT/(d.M*wheelGyrationFactor)
+		if a.wheelVelocityBelowMax(w.angleVelocity*d.R) {
+			w.angleVelocity += a.wheelForce * a.deltaT / (d.M * wheelGyrationFactor)
 		}
 	}
-	a.wheelAngle[i] += a.wheelAngleVelocity[i] * deltaT
+
+	w.angle += w.angleVelocity * a.deltaT
+}
+
+func (a *anim) viewBorderStep() {
+	for i := 0; i < a.nDots; i++ {
+		d := &a.dots[i]
+		if d.VelocityX < 0 && d.X < a.viewX + d.R {
+			d.VelocityX *= bounceFactor
+			d.X = a.viewX + d.R
+		}
+	}
+}
+
+
+func (a *anim) viewScrollStep() {
+	if a.nDots == 0 {
+		return
+	}
+	d := &a.dots[0]
+	q := a.width * .5
+	if d.X > a.viewX + q {
+		a.viewX = d.X - q
+	}
+}
+
+func (a *anim) worldCycle() {
+	for i := 1; i < a.nPlatforms; i++ {  // index: 0 is ground
+		p := &a.platforms[i]
+		if p.right < a.viewX {
+			p.left = a.viewX+(1+rand.Float64())*a.width
+			p.right = p.left + (1+rand.Float64())*.2*a.width
+			p.y = (1+rand.Float64())*.5*a.height  //todo:  up-n-down going
+		}
+	}
 }
 
 func newAnim(width, height, dotSize float64, nNodes int) *anim {
@@ -262,9 +368,13 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 	}
 	ctx := elem.Call("getContext", "2d")
 	a := anim{width, height, dotSize,
-		make([]springweb.Node, nNodes), nil, 0, 0, false,
-		ctx, images, js.Func{}, time.Time{}, 0, 0,
-		2, make([]float64, 2), make([]float64, 2), false, false}
+		make([]springweb.Node, nNodes), nil, 0, 0, 0, false,
+		ctx, images, js.Func{}, time.Time{}, 0, false, false, 0, 0,
+		make([]wheel, 2), 2,
+		make([]platform, 3), 3}
+
+	a.platforms[0] = platform{0, 1e9, a.height}  // note: the ground
+
 	a.clear()
 	a.callback = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		if !a.running {
@@ -273,18 +383,25 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 		t := time.Now()
 		if a.running {
 			x, y := a.draggedDotPosition()
-			deltaT := 1e-9*float64(t.Sub(a.lastCall))
+			deltaT := 1e-9 * float64(t.Sub(a.lastCall))
 			if a.deltaT == 0 || deltaT < a.deltaT*9 {
 				a.deltaT = deltaT
 			}
 			springweb.Step(a.dots[:a.nDots], a.deltaT)
 			for i := 0; i < a.nWheels; i++ {
-				a.wheelRotation(a.deltaT, i)
+				if i < a.nDots {
+					a.wheelRotation(i)
+				}
 			}
-			a.borderStep()
-			a.gravityStep(a.deltaT)
+			a.platformsStep()
+			a.gravityStep()
+			a.viewBorderStep()
+			a.viewScrollStep()
+			a.worldCycle()
 			a.positionDraggedDot(x, y)
 			a.drawWeb()
+			a.drawPlatforms()
+			a.drawControl()
 		}
 		a.lastCall = t
 		js.Global().Call("requestAnimationFrame", a.callback)
@@ -300,6 +417,7 @@ func (a *anim) toggleRunEdit() {
 		copy(a.resetNodes, a.dots)
 		springweb.StepsPrepare(a.dots[:a.nDots])
 		a.lastCall = time.Now()
+		a.nGassDots = a.nDots
 		js.Global().Call("requestAnimationFrame", a.callback)
 	} else {
 		copy(a.dots, a.resetNodes)
@@ -480,7 +598,7 @@ func (a *anim) pointerMove(event js.Value) {
 		y := event.Get("clientY").Float()
 		a.positionDraggedDot(x, y)
 	}
-	a.wheelForce = (2*x / a.width - 1) * maxWheelForce
+	a.wheelForce = (2*x/a.width - 1) * maxWheelForce
 }
 
 func (a *anim) keyup(event js.Value) {
