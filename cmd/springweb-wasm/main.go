@@ -59,7 +59,6 @@ func (a *anim) newLineK(i, j int, k float64) {
 
 func (a *anim) newLine(i, j int) {
 	if i <= j { // contract: springweb
-		log("newLine", i, j)
 		return
 	}
 	a.newLineK(i, j, defaultK)
@@ -547,8 +546,6 @@ func main() {
 	a.newLineK(2, 1, minK)
 	a.newLineK(2, 0, minK)
 	a.start()
-	log("h", height)
-	log("w", width)
 
 	<-make(chan bool)
 }
