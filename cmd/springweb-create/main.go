@@ -231,7 +231,7 @@ func newAnim(width, height, dotSize float64, nNodes int) *anim {
 		if a.running {
 			x, y := a.draggedDotPosition()
 			deltaT := 1e-9*float64(t.Sub(a.lastCall))
-			if a.deltaT == 0 || deltaT < a.deltaT*9 {
+			if a.deltaT == 0 || deltaT < .3 {
 				a.deltaT = deltaT
 			}
 			springweb.Step(a.dots[:a.nDots], a.deltaT)

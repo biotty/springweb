@@ -23,11 +23,12 @@ Clicking the upper left double-rectangle (swapped for the triangle to run)
 will go back to edit-mode so that additional dots and lines may be added,
 or the existing ones removed or the last objects respective K or M value modified.
 
-http://maraca.name/springweb-create/
+http://compctl.com/springweb-create/
 
 # Game with Alphabet
 
 A car is controlled by mouse position, affecting with a force to its front or back.
 To the right is ahead, and letters will appear to collect among the platforms.
 
-http://maraca.name/springweb-game/
+http://compctl.com/springweb-game/
+
